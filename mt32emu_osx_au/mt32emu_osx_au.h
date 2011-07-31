@@ -13,6 +13,9 @@
 #include "mt32emu_osx_auVersion.h"
 #include "AUInstrumentBase.h"
 
+//this value scales the volume output 
+//use a small value here, if not it is much too loud
+#define OUTSCALE 0.0001f;
 
 // #define DEBUG_PRINT 1 
 
@@ -53,11 +56,13 @@ static int report(void *userData, MT32Emu::ReportType type, const void *reportDa
 
 enum {
 	kGlobalVolumeParam = 0,
+	kChannelNumberParameter = 1,
 	//Add your parameters here...
-	kNumberOfParameters=1
+	kNumberOfParameters=2
 };
 
 static const CFStringRef kGlobalVolumeName = CFSTR("global volume");
+static const CFStringRef kChannelNumberName = CFSTR("used channels(0=mono,1=stereo,2=surround)");
 
 typedef   signed short int Bit16s;
 
@@ -80,9 +85,22 @@ public:
 	
 	virtual OSStatus			HandleMidiEvent(UInt8 status, UInt8 channel, UInt8 data1, UInt8 data2, UInt32 inStartFrame);
 	virtual OSStatus			HandleSysEx(		const UInt8 *	inData,	UInt32			inLength );
+
 private:
+	virtual OSStatus			SetOutChannelsFromView();
+
+	virtual ComponentResult		Render2Chan(AudioUnitRenderActionFlags &	ioActionFlags,
+									        const AudioTimeStamp &			inTimeStamp,
+									        UInt32							inNumberFrames,
+											AudioBufferList&				outOutputData);
 	
+	virtual ComponentResult		Render6Chan(AudioUnitRenderActionFlags &	ioActionFlags,
+									        const AudioTimeStamp &			inTimeStamp,
+									        UInt32							inNumberFrames,
+											AudioBufferList&				outOutputData);
 	
+	AudioTimeStamp lastTimeStamp;
+	pthread_mutex_t mAUMutex;
 	MT32Emu::Synth *_synth;
 	bool isOpen;
 	int mt32samplerate;
