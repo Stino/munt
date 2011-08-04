@@ -45,6 +45,7 @@
 		8BA05B080720754400365D66 /* CAAUParameter.h in Headers */ = {isa = PBXBuildFile; fileRef = 8BA05B060720754400365D66 /* CAAUParameter.h */; };
 		8BC6025C073B072D006C4272 /* mt32emu_osx_au.h in Headers */ = {isa = PBXBuildFile; fileRef = 8BC6025B073B072D006C4272 /* mt32emu_osx_au.h */; };
 		8D01CCCA0486CAD60068D4B7 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 089C167DFE841241C02AAC07 /* InfoPlist.strings */; };
+		CC0141E913E8ABAF00A530C9 /* Structures.h in Headers */ = {isa = PBXBuildFile; fileRef = CC0141E813E8ABAF00A530C9 /* Structures.h */; };
 		CC0AA4FB13E021D300C0E448 /* mt32emu.h in Headers */ = {isa = PBXBuildFile; fileRef = CC0AA4FA13E021D300C0E448 /* mt32emu.h */; };
 		CC0AA50213E0221200C0E448 /* libmt32emu.a in Frameworks */ = {isa = PBXBuildFile; fileRef = CC0AA50113E0221200C0E448 /* libmt32emu.a */; };
 		F78221E40ECE5CD000F413C6 /* AUBaseHelper.cpp in Sources */ = {isa = PBXBuildFile; fileRef = F78221E20ECE5CD000F413C6 /* AUBaseHelper.cpp */; };
@@ -113,8 +114,11 @@
 		8BC6025B073B072D006C4272 /* mt32emu_osx_au.h */ = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.h; path = mt32emu_osx_au.h; sourceTree = "<group>"; };
 		8D01CCD10486CAD60068D4B7 /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		8D01CCD20486CAD60068D4B7 /* mt32emu_osx_au.component */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = mt32emu_osx_au.component; sourceTree = BUILT_PRODUCTS_DIR; };
+		CC0141E813E8ABAF00A530C9 /* Structures.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = Structures.h; path = /usr/local/include/mt32emu/Structures.h; sourceTree = "<absolute>"; };
 		CC0AA4FA13E021D300C0E448 /* mt32emu.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = mt32emu.h; path = /usr/local/include/mt32emu/mt32emu.h; sourceTree = "<absolute>"; };
 		CC0AA50113E0221200C0E448 /* libmt32emu.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libmt32emu.a; path = /usr/local/lib/libmt32emu.a; sourceTree = "<absolute>"; };
+		CC67F83613EB2D66008A4071 /* MT32_CONTROL.ROM */ = {isa = PBXFileReference; lastKnownFileType = file; path = MT32_CONTROL.ROM; sourceTree = "<group>"; };
+		CC67F83713EB2D66008A4071 /* MT32_PCM.ROM */ = {isa = PBXFileReference; lastKnownFileType = file; path = MT32_PCM.ROM; sourceTree = "<group>"; };
 		F78221E20ECE5CD000F413C6 /* AUBaseHelper.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = AUBaseHelper.cpp; path = Extras/CoreAudio/AudioUnits/AUPublic/Utility/AUBaseHelper.cpp; sourceTree = SYSTEM_DEVELOPER_DIR; };
 		F78221E30ECE5CD000F413C6 /* AUBaseHelper.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = AUBaseHelper.h; path = Extras/CoreAudio/AudioUnits/AUPublic/Utility/AUBaseHelper.h; sourceTree = SYSTEM_DEVELOPER_DIR; };
 		F7E148880AB62EC30089813D /* AUMIDIBase.cpp */ = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.cpp.cpp; path = AUMIDIBase.cpp; sourceTree = "<group>"; };
@@ -168,6 +172,7 @@
 			children = (
 				CC0AA50113E0221200C0E448 /* libmt32emu.a */,
 				CC0AA4FA13E021D300C0E448 /* mt32emu.h */,
+				CC0141E813E8ABAF00A530C9 /* Structures.h */,
 				8B5C7FBF076FB2C200A15F61 /* CoreAudio.framework */,
 				8BA05B01072074F900365D66 /* CoreServices.framework */,
 				8BA05AF9072074E100365D66 /* AudioToolbox.framework */,
@@ -179,6 +184,8 @@
 		089C167CFE841241C02AAC07 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				CC67F83613EB2D66008A4071 /* MT32_CONTROL.ROM */,
+				CC67F83713EB2D66008A4071 /* MT32_PCM.ROM */,
 				8D01CCD10486CAD60068D4B7 /* Info.plist */,
 				089C167DFE841241C02AAC07 /* InfoPlist.strings */,
 			);
@@ -352,6 +359,7 @@
 				F7E148B80AB62F9E0089813D /* CAAUMIDIMapManager.h in Headers */,
 				F78221E50ECE5CD000F413C6 /* AUBaseHelper.h in Headers */,
 				CC0AA4FB13E021D300C0E448 /* mt32emu.h in Headers */,
+				CC0141E913E8ABAF00A530C9 /* Structures.h in Headers */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -9,6 +9,7 @@
  */
 
 #include "mt32emu.h"
+#include "Structures.h"
 
 #include "mt32emu_osx_auVersion.h"
 #include "AUInstrumentBase.h"
@@ -63,8 +64,23 @@ enum {
 
 static const CFStringRef kGlobalVolumeName = CFSTR("global volume");
 static const CFStringRef kChannelNumberName = CFSTR("used channels(0=mono,1=stereo,2=surround)");
+const UInt32 kEventQueueSize = 1024;
 
-typedef   signed short int Bit16s;
+typedef MT32Emu::Bit32u Bit32u;
+typedef MT32Emu::Bit16s Bit16s;
+
+struct MidiMsg
+{
+	Bit32u msg;
+	UInt32 inStartFrame;
+	
+	void Free()
+	{
+		// nothing to free at the moment
+	}
+};
+
+typedef LockFreeFIFOWithFree<MidiMsg> MidiMsgQueue;
 
 class mt32emu_osx_au : public AUInstrumentBase
 {
@@ -84,18 +100,20 @@ public:
 	virtual OSStatus			GetParameterInfo(AudioUnitScope inScope, AudioUnitParameterID inParameterID, AudioUnitParameterInfo &outParameterInfo);
 	
 	virtual OSStatus			HandleMidiEvent(UInt8 status, UInt8 channel, UInt8 data1, UInt8 data2, UInt32 inStartFrame);
-	virtual OSStatus			HandleSysEx(		const UInt8 *	inData,	UInt32			inLength );
+	virtual OSStatus			HandleSysEx(const UInt8 *inData, UInt32	inLength);
 
 private:
-	virtual OSStatus			SetOutChannelsFromView();
+	OSStatus			SetOutChannelsFromView();
 
-	virtual ComponentResult		Render2Chan(AudioUnitRenderActionFlags &	ioActionFlags,
-									        const AudioTimeStamp &			inTimeStamp,
+	inline ComponentResult	RenderAllChan(  UInt32							frameOffset,
+											UInt32							inNumberFrames,
+											AudioBufferList&				outOutputData);
+	
+	inline ComponentResult		Render2Chan(UInt32							frameOffset,
 									        UInt32							inNumberFrames,
 											AudioBufferList&				outOutputData);
 	
-	virtual ComponentResult		Render6Chan(AudioUnitRenderActionFlags &	ioActionFlags,
-									        const AudioTimeStamp &			inTimeStamp,
+	inline ComponentResult		Render6Chan(UInt32							frameOffset,
 									        UInt32							inNumberFrames,
 											AudioBufferList&				outOutputData);
 	
@@ -104,5 +122,5 @@ private:
 	MT32Emu::Synth *_synth;
 	bool isOpen;
 	int mt32samplerate;
-	
+	MidiMsgQueue mMidiQueue;
 };

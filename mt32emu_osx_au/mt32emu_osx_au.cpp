@@ -36,7 +36,8 @@ COMPONENT_ENTRY(mt32emu_osx_au)
 mt32emu_osx_au::mt32emu_osx_au(ComponentInstance inComponentInstance)
 : AUInstrumentBase(inComponentInstance, 0, 1),
 _synth(0),
-isOpen(false)
+isOpen(false),
+mMidiQueue(kEventQueueSize)
 
 {
 	MT32Emu::SynthProperties tmpProp;
@@ -225,9 +226,76 @@ ComponentResult	mt32emu_osx_au::Render(AudioUnitRenderActionFlags &	ioActionFlag
 								const AudioTimeStamp &			inTimeStamp,
 								UInt32							inNumberFrames)
 {	
-	pthread_mutex_lock(&mAUMutex);
 	ComponentResult err = noErr;
+	MidiMsg *event;	
+	UInt32 fromFrame = 0;
+	UInt32 diff = 0;
 	AudioBufferList& outOutputData = GetOutput(0)->GetBufferList();	
+#ifdef DEBUG_PRINT	
+	printf("MT32: Render start\n");
+#endif	
+	
+	//workaround: we send now all MIDI messages from puffer to MUNT
+	// later it is needed to look on the inStartFrame to decide when it rendered
+	while ((event = mMidiQueue.ReadItem()) != NULL)
+	{
+		if (fromFrame == event->inStartFrame)		
+		{
+			// play midi notes as long as they are at fromFrame
+#ifdef DEBUG_PRINT				
+			printf("MT32: play MIDI at: %ld\n",(long int)event->inStartFrame);
+#endif			
+			pthread_mutex_lock(&mAUMutex);
+			if (_synth) _synth->playMsg(event->msg);
+			pthread_mutex_unlock(&mAUMutex);
+		}
+		else
+		{
+			// check correct sort
+			if (event->inStartFrame < fromFrame) COMPONENT_THROW(-5);		
+			//render all played midi notes till frame before actual frame
+			diff = event->inStartFrame - fromFrame;
+			pthread_mutex_lock(&mAUMutex);
+			err = RenderAllChan(fromFrame,diff,outOutputData);
+			pthread_mutex_unlock(&mAUMutex);
+#ifdef DEBUG_PRINT				
+			printf("MT32: render %ld Frames from: %ld \n",(long int)diff,(long int)fromFrame);
+#endif			
+			
+			// play actual midi note
+#ifdef DEBUG_PRINT				
+			printf("MT32: play MIDI at: %ld\n",(long int)event->inStartFrame);
+#endif			
+			pthread_mutex_lock(&mAUMutex);
+			if (_synth) _synth->playMsg(event->msg);
+			pthread_mutex_unlock(&mAUMutex);
+			// set fromFrame to actual frame
+			fromFrame = event->inStartFrame;
+		}
+		
+		mMidiQueue.AdvanceReadPtr();
+	}	
+	// render rest
+	diff = inNumberFrames - fromFrame;
+	pthread_mutex_lock(&mAUMutex);
+	err = RenderAllChan(fromFrame,diff,outOutputData);
+	pthread_mutex_unlock(&mAUMutex);
+#ifdef DEBUG_PRINT		
+	printf("MT32: render rest %ld Frames from: %ld \n",(long int)diff,(long int)fromFrame);
+#endif	
+	return err;
+}
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//	mt32emu_osx_au::RenderAllChan
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// The Sound output, that is created by MT32 synth
+inline ComponentResult	mt32emu_osx_au::RenderAllChan(UInt32			frameOffset,
+									   UInt32							inNumberFrames,
+									   AudioBufferList&				    outOutputData)
+{	
+	ComponentResult err = noErr;
+
 	
 	// Debug inTimeStamp
 #ifdef DEBUG_PRINT		
@@ -241,38 +309,28 @@ ComponentResult	mt32emu_osx_au::Render(AudioUnitRenderActionFlags &	ioActionFlag
 	printf("MT32: numChans: %d\n",(int)outOutputData.mNumberBuffers);
 #endif
 	
-#ifdef DEBUG_PRINT		
-	clock_t t1 = clock();
-#endif
 	switch (outOutputData.mNumberBuffers)
 	{
 		case 1:		
 		case 2:			
 			// mono and stereo are handled by 2 channel render of MUNT
-			err = Render2Chan(ioActionFlags, inTimeStamp, inNumberFrames, outOutputData);
+			err = Render2Chan(frameOffset,inNumberFrames, outOutputData);
 			break;			
 		case 6:			
 			// 6 channel render of MUNT
-			err = Render6Chan(ioActionFlags, inTimeStamp, inNumberFrames, outOutputData);
+			err = Render6Chan(frameOffset,inNumberFrames, outOutputData);
 			break;			
 		default:
 			return kAudioDeviceUnsupportedFormatError;
 	}
 	
-#ifdef DEBUG_PRINT	
-	clock_t t2 = clock();
-	printf("MT32: render time: %ld\n",t1);
-	printf("MT32: render calc time: %ld\n",t2-t1);
-#endif	
-	pthread_mutex_unlock(&mAUMutex);
 	return err;
 }
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //	mt32emu_osx_au::Render2Chan
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-ComponentResult		mt32emu_osx_au::Render2Chan(AudioUnitRenderActionFlags &	ioActionFlags,
-										const AudioTimeStamp &			inTimeStamp,
+inline ComponentResult		mt32emu_osx_au::Render2Chan(UInt32					frameOffset,
 										UInt32							inNumberFrames,
 										AudioBufferList&				outOutputData)
 {
@@ -285,9 +343,11 @@ ComponentResult		mt32emu_osx_au::Render2Chan(AudioUnitRenderActionFlags &	ioActi
 	
 	// init pointers for moving in array
 	l1 = (float*)outOutputData.mBuffers[0].mData;
+	l1 += frameOffset;
 	if (outOutputData.mNumberBuffers == 2) r1 = (float*)outOutputData.mBuffers[1].mData;
+	if (outOutputData.mNumberBuffers == 2) r1 += frameOffset;
 	
-	// call 2 channel render of MUNT (know it is intenal an 6 channel render)
+	// call 2 channel render of MUNT (know it is intenal an 6 channel render)	
 	_synth->render((Bit16s *)tempbuff, inNumberFrames);
 	
 	// convert outbuffer of MUNT to outpuffer of AU
@@ -298,22 +358,13 @@ ComponentResult		mt32emu_osx_au::Render2Chan(AudioUnitRenderActionFlags &	ioActi
 		*l1 = (*t) * scaleVol;
 		l1++;
 		t++;
-		t++;
-	}
-	if (outOutputData.mNumberBuffers == 2) 
-	{ 
-		len = inNumberFrames;
-		t=tempbuff;
-		while(len>0)
+		if (outOutputData.mNumberBuffers == 2)
 		{
-			len--;
-			t++;
 			*r1 = (*t) * scaleVol;
 			r1++;
-			t++;
 		}
+		t++;
 	}		
-
 	
 	// free buffer
 	delete tempbuff;
@@ -323,8 +374,7 @@ ComponentResult		mt32emu_osx_au::Render2Chan(AudioUnitRenderActionFlags &	ioActi
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //	mt32emu_osx_au::Render6Chan
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-ComponentResult	mt32emu_osx_au::Render6Chan(AudioUnitRenderActionFlags &	ioActionFlags,
-										const AudioTimeStamp &			inTimeStamp,
+inline ComponentResult	mt32emu_osx_au::Render6Chan(UInt32						frameOffset,
 										UInt32							inNumberFrames,
 										AudioBufferList&				outOutputData)
 {	
@@ -353,8 +403,14 @@ ComponentResult	mt32emu_osx_au::Render6Chan(AudioUnitRenderActionFlags &	ioActio
 	r2 = (float*)outOutputData.mBuffers[3].mData;
 	l3 = (float*)outOutputData.mBuffers[4].mData;
 	r3 = (float*)outOutputData.mBuffers[5].mData;
+	l1 += frameOffset;
+	r1 += frameOffset;
+	l2 += frameOffset;
+	r2 += frameOffset;
+	l3 += frameOffset;
+	r3 += frameOffset;
 	
-	// call 2 channel render of MUNT (know it is intenal an 6 channel render)
+	// call 6 channel render of MUNT
 	_synth->renderStreams((Bit16s *)tempLeft1, (Bit16s *)tempRight1, (Bit16s *)tempLeft2, (Bit16s *)tempRight2,(Bit16s *)tempLeft3, (Bit16s *)tempRight3, inNumberFrames);
 	
 	// convert outbuffer of MUNT to outpuffer of AU// convert outbuffer of MUNT to outpuffer of AU
@@ -399,7 +455,6 @@ ComponentResult	mt32emu_osx_au::Render6Chan(AudioUnitRenderActionFlags &	ioActio
 // The MIDI input, that we forward to MT32 synth
 OSStatus 	mt32emu_osx_au::HandleMidiEvent(UInt8 status, UInt8 channel, UInt8 data1, UInt8 data2, UInt32 inStartFrame)
 {
-	pthread_mutex_lock(&mAUMutex);
 	unsigned long msg = 0;
 	
 	msg = channel & 0x0000000F;
@@ -409,17 +464,13 @@ OSStatus 	mt32emu_osx_au::HandleMidiEvent(UInt8 status, UInt8 channel, UInt8 dat
 #ifdef DEBUG_PRINT
 	printf("MT32: Midi-Data: %8.8X\n",(unsigned int)msg);
 #endif	
-	
-#ifdef DEBUG_PRINT			
-	clock_t t1 = clock();
-#endif	
-	if (_synth) _synth->playMsg(msg);
-#ifdef DEBUG_PRINT			
-	clock_t t2 = clock();
-	printf("MT32: MIDI time: %ld\n",t1);
-	printf("MT32: MIDI calc time: %ld\n",t2-t1);
-#endif	
-	pthread_mutex_unlock(&mAUMutex);
+		
+	MidiMsg *event = mMidiQueue.WriteItem();
+	if (!event) return -1;
+	event->msg = msg;
+	event->inStartFrame = inStartFrame;
+	mMidiQueue.AdvanceWritePtr();
+
 	return noErr;
 }
 
