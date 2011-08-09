@@ -15,13 +15,17 @@ comb::comb()
 void comb::setbuffer(float *buf, int size)
 {
 	buffer = buf;
+	bufferptr = buf;
 	bufsize = size;
 }
 
 void comb::mute()
 {
-	for (int i=0; i<bufsize; i++)
-		buffer[i]=0;
+    float *tmp=buffer;
+	for (int i=0; i<bufsize; i++){
+		*tmp=0;
+        tmp++;
+    }
 }
 
 void comb::setdamp(float val)
@@ -49,4 +53,5 @@ void comb::deletebuffer()
 {
 	delete[] buffer;
 	buffer = 0;
+    bufferptr = 0;
 }

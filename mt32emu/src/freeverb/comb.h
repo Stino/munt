@@ -27,6 +27,7 @@ private:
 	float   damp1;
 	float   damp2;
 	float   *buffer;
+	float   *bufferptr;
 	int     bufsize;
 	int     bufidx;
 };
@@ -38,13 +39,16 @@ inline float comb::process(float input)
 {
 	float output;
 
-	output = undenormalise(buffer[bufidx]);
+	output = undenormalise(*bufferptr);
 
 	filterstore = undenormalise((output*damp2) + (filterstore*damp1));
 
-	buffer[bufidx] = input + (filterstore*feedback);
+	*bufferptr = input + (filterstore*feedback);
 
-	if (++bufidx>=bufsize) bufidx = 0;
+	if (++bufidx>=bufsize) {
+        bufidx = 0;
+        bufferptr = buffer;
+    }
 
 	return output;
 }
