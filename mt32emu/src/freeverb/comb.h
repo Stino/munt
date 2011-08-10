@@ -45,6 +45,7 @@ inline float comb::process(float input)
 
 	*bufferptr = input + (filterstore*feedback);
 
+    bufferptr++;
 	if (++bufidx>=bufsize) {
         bufidx = 0;
         bufferptr = buffer;
