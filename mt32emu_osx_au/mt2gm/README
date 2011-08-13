@@ -1,0 +1,12 @@
+README
+------
+
+The needed MIDI files for remapping MT32 to General MIDI can be found at web side of Roland:
+
+http://www.rolandus.com/support/downloads_updates/eula.php?FileName=MT2GM.EXE
+
+MT2GM.EXE is an self extracting EXE file that contains the needed files:
+-MTGM.MID
+-MTR-ORCH.MID
+-MTR-STND.MID
+-CMR-SFX.MID

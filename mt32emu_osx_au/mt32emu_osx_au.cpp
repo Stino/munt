@@ -43,6 +43,8 @@ mMidiQueue(kEventQueueSize)
 	MT32Emu::SynthProperties tmpProp;
 	memset(&tmpProp, 0, sizeof(tmpProp));
 	
+	pthread_mutex_init (&mAUMutex, NULL);
+	
 	CreateElements();	
 	
 	_synth = new MT32Emu::Synth();
@@ -56,11 +58,6 @@ mMidiQueue(kEventQueueSize)
 #endif	
 	
 	tmpProp.sampleRate = mt32samplerate;
-	tmpProp.useDefaultReverb = true;
-	tmpProp.useReverb = true;
-	tmpProp.reverbType = 1;
-	tmpProp.reverbTime = 5;
-	tmpProp.reverbLevel = 3;
 	tmpProp.printDebug = &vdebug;
 	tmpProp.report = &report;
 	
@@ -88,7 +85,48 @@ mMidiQueue(kEventQueueSize)
 	Globals()->UseIndexedParameters (kNumberOfParameters); // we're only defining one param
 	Globals()->SetParameter (kGlobalVolumeParam, 0.5);
 	Globals()->SetParameter (kChannelNumberParameter, 1); // 1 is equal to stereo, that is the default at moment
-	
+
+	// open MIDI Files from Roland that re-program the MT32 to an general MIDI device
+	LoadSysExFromMIDIFile("MTGM.MID"); //Standart GMIDI remapping
+	LoadSysExFromMIDIFile("MTR-STND.MID"); //Standart Drum Set
+	//LoadSysExFromMIDIFile("MTR-ORCH.MID"); //Alternative Drum Set
+	LoadSysExFromMIDIFile("CMR-SFX.MID"); //Sound Effects
+}
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//	mt32emu_osx_au::LoadSysExFromMIDIFile
+//
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+void mt32emu_osx_au::LoadSysExFromMIDIFile(const char *filename){
+#ifdef USE_MT32_AS_GMIDI	
+	MusicSequence sequence;
+	MusicTrack track;
+	MusicEventIterator iter;
+	Boolean hasCurrentEvent;
+	NewMusicSequence(&sequence);
+	MusicSequenceLoadFlags	loadFlags = 0;
+	CFURLRef url = CFURLCreateFromFileSystemRepresentation(kCFAllocatorDefault, (const UInt8*)filename, strlen(filename), false);
+	OSStatus result = MusicSequenceFileLoad (sequence, url, 0, loadFlags);
+	if (result == noErr) {
+		result = MusicSequenceGetIndTrack(sequence,0, &track);
+		result = NewMusicEventIterator(track,&iter);
+		result = MusicEventIteratorHasCurrentEvent (iter, &hasCurrentEvent);
+		while (hasCurrentEvent) {
+			MusicTimeStamp timeStamp;
+			MusicEventType eventType;
+			const void *dataPtr;
+			UInt32 dataLen;
+			MusicEventIteratorGetEventInfo ( iter, &timeStamp, &eventType, &dataPtr, &dataLen);
+			// files from roland just contains SysEx and meta info that we ignore
+			if (eventType == kMusicEventType_MIDIRawData) {
+				HandleSysEx((UInt8 *)dataPtr+4,dataLen-4);
+			}
+			MusicEventIteratorNextEvent (iter);
+			MusicEventIteratorHasCurrentEvent (iter, &hasCurrentEvent);
+		}
+		DisposeMusicEventIterator (iter);
+	}
+#endif	
 }
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -172,7 +210,9 @@ OSStatus mt32emu_osx_au::Initialize()
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //	mt32emu_osx_au::GetParameterInfo
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-OSStatus mt32emu_osx_au::GetParameterInfo(AudioUnitScope inScope, AudioUnitParameterID inParameterID, AudioUnitParameterInfo &outParameterInfo)
+OSStatus mt32emu_osx_au::GetParameterInfo(AudioUnitScope inScope, 
+										  AudioUnitParameterID inParameterID, 
+										  AudioUnitParameterInfo &outParameterInfo)
 {	
 	if (inScope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
 	switch(inParameterID)
@@ -191,7 +231,7 @@ OSStatus mt32emu_osx_au::GetParameterInfo(AudioUnitScope inScope, AudioUnitParam
 			return noErr;
 		
 		case kChannelNumberParameter:
-			outParameterInfo.flags = SetAudioUnitParameterDisplayType (0, kAudioUnitParameterFlag_ValuesHaveStrings);
+			outParameterInfo.flags = SetAudioUnitParameterDisplayType (0, kAudioUnitParameterFlag_DisplaySquareRoot);
 			outParameterInfo.flags += kAudioUnitParameterFlag_IsWritable;
 			outParameterInfo.flags += kAudioUnitParameterFlag_IsReadable;
 			
@@ -223,8 +263,8 @@ ComponentResult mt32emu_osx_au::RestoreState(CFPropertyListRef plist)
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // The Sound output, that is created by MT32 synth
 ComponentResult	mt32emu_osx_au::Render(AudioUnitRenderActionFlags &	ioActionFlags,
-								const AudioTimeStamp &			inTimeStamp,
-								UInt32							inNumberFrames)
+									   const AudioTimeStamp &		inTimeStamp,
+									   UInt32						inNumberFrames)
 {	
 	ComponentResult err = noErr;
 	MidiMsg *event;	
@@ -235,8 +275,13 @@ ComponentResult	mt32emu_osx_au::Render(AudioUnitRenderActionFlags &	ioActionFlag
 	printf("MT32: Render start\n");
 #endif	
 	
-	//workaround: we send now all MIDI messages from puffer to MUNT
-	// later it is needed to look on the inStartFrame to decide when it rendered
+#ifdef DEBUG_PRINT
+	// Debug inTimeStamp
+	printf("MT32: inTimeStamp.mHostTime: %lld\n",inTimeStamp.mHostTime);
+	printf("MT32: inTimeStamp.mHostTime Delta: %lld\n",(inTimeStamp.mHostTime-lastTimeStamp.mHostTime));
+	lastTimeStamp = inTimeStamp;
+#endif	
+	
 	while ((event = mMidiQueue.ReadItem()) != NULL)
 	{
 		if (fromFrame == event->inStartFrame)		
@@ -263,7 +308,7 @@ ComponentResult	mt32emu_osx_au::Render(AudioUnitRenderActionFlags &	ioActionFlag
 #endif			
 			
 			// play actual midi note
-#ifdef DEBUG_PRINT				
+#ifdef DEBUG_PRINT			
 			printf("MT32: play MIDI at: %ld\n",(long int)event->inStartFrame);
 #endif			
 			pthread_mutex_lock(&mAUMutex);
@@ -280,7 +325,7 @@ ComponentResult	mt32emu_osx_au::Render(AudioUnitRenderActionFlags &	ioActionFlag
 	pthread_mutex_lock(&mAUMutex);
 	err = RenderAllChan(fromFrame,diff,outOutputData);
 	pthread_mutex_unlock(&mAUMutex);
-#ifdef DEBUG_PRINT		
+#ifdef DEBUG_PRINT	
 	printf("MT32: render rest %ld Frames from: %ld \n",(long int)diff,(long int)fromFrame);
 #endif	
 	return err;
@@ -290,19 +335,11 @@ ComponentResult	mt32emu_osx_au::Render(AudioUnitRenderActionFlags &	ioActionFlag
 //	mt32emu_osx_au::RenderAllChan
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // The Sound output, that is created by MT32 synth
-inline ComponentResult	mt32emu_osx_au::RenderAllChan(UInt32			frameOffset,
-									   UInt32							inNumberFrames,
-									   AudioBufferList&				    outOutputData)
+inline ComponentResult	mt32emu_osx_au::RenderAllChan(UInt32 frameOffset,
+													  UInt32 inNumberFrames,
+													  AudioBufferList& outOutputData)
 {	
 	ComponentResult err = noErr;
-
-	
-	// Debug inTimeStamp
-#ifdef DEBUG_PRINT		
-	printf("MT32: inTimeStamp.mHostTime: %lld\n",inTimeStamp.mHostTime);
-	printf("MT32: inTimeStamp.mHostTime Delta: %lld\n",(inTimeStamp.mHostTime-lastTimeStamp.mHostTime));
-	lastTimeStamp = inTimeStamp;
-#endif	
 	
 	
 #ifdef DEBUG_PRINT	
@@ -330,9 +367,9 @@ inline ComponentResult	mt32emu_osx_au::RenderAllChan(UInt32			frameOffset,
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //	mt32emu_osx_au::Render2Chan
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-inline ComponentResult		mt32emu_osx_au::Render2Chan(UInt32					frameOffset,
-										UInt32							inNumberFrames,
-										AudioBufferList&				outOutputData)
+inline ComponentResult mt32emu_osx_au::Render2Chan(UInt32 frameOffset,
+												   UInt32 inNumberFrames,
+												   AudioBufferList&	outOutputData)
 {
 	UInt32 len;
 	float *l1, *r1 = 0;
@@ -374,9 +411,9 @@ inline ComponentResult		mt32emu_osx_au::Render2Chan(UInt32					frameOffset,
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //	mt32emu_osx_au::Render6Chan
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-inline ComponentResult	mt32emu_osx_au::Render6Chan(UInt32						frameOffset,
-										UInt32							inNumberFrames,
-										AudioBufferList&				outOutputData)
+inline ComponentResult	mt32emu_osx_au::Render6Chan(UInt32 frameOffset,
+													UInt32 inNumberFrames,
+													AudioBufferList& outOutputData)
 {	
 	UInt32 len;
 	float *l1, *r1, *l2, *r2, *l3, *r3 = 0;
@@ -453,7 +490,11 @@ inline ComponentResult	mt32emu_osx_au::Render6Chan(UInt32						frameOffset,
 //	mt32emu_osx_au::HandleMidiEvent
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // The MIDI input, that we forward to MT32 synth
-OSStatus 	mt32emu_osx_au::HandleMidiEvent(UInt8 status, UInt8 channel, UInt8 data1, UInt8 data2, UInt32 inStartFrame)
+OSStatus 	mt32emu_osx_au::HandleMidiEvent(UInt8 status, 
+											UInt8 channel, 
+											UInt8 data1, 
+											UInt8 data2, 
+											UInt32 inStartFrame)
 {
 	unsigned long msg = 0;
 	
@@ -461,8 +502,39 @@ OSStatus 	mt32emu_osx_au::HandleMidiEvent(UInt8 status, UInt8 channel, UInt8 dat
 	msg = msg + ((status     ) & 0x000000F0); // normaly status needs to shift 4 bits, but status is already shifted
 	msg = msg + ((data1 <<  8) & 0x0000FF00);
 	msg = msg + ((data2 << 16) & 0x00FF0000);
+	
 #ifdef DEBUG_PRINT
-	printf("MT32: Midi-Data: %8.8X\n",(unsigned int)msg);
+	printf("MT32: Midi-Data: %6.6X - ",(unsigned int)msg);
+	switch(status>>4)
+	{
+		case 8:
+			printf("Note Off at channel %d\n",channel);
+			break;
+		case 9:
+			printf("Note On at channel %d\n",channel);
+			break;			
+		case 10:
+			printf("Polyphonic Pressure at channel %d\n",channel);
+			break;
+		case 11:
+			printf("Control Change at channel %d\n",channel);
+			break;
+		case 12:
+			printf("Programm Change at channel %d\n",channel);
+			break;
+		case 13:
+			printf("Channel Pressure at channel %d\n",channel);
+			break;
+		case 14:
+			printf("Pitch Bending at channel %d\n",channel);
+			break;
+		case 15:
+			printf("System Exclusive at channel %d\n",channel);
+			break;
+		default:
+			printf("\n");
+			break;
+	}
 #endif	
 		
 	MidiMsg *event = mMidiQueue.WriteItem();
@@ -470,7 +542,7 @@ OSStatus 	mt32emu_osx_au::HandleMidiEvent(UInt8 status, UInt8 channel, UInt8 dat
 	event->msg = msg;
 	event->inStartFrame = inStartFrame;
 	mMidiQueue.AdvanceWritePtr();
-
+	
 	return noErr;
 }
 
@@ -478,7 +550,8 @@ OSStatus 	mt32emu_osx_au::HandleMidiEvent(UInt8 status, UInt8 channel, UInt8 dat
 //	mt32emu_osx_au::HandleSysEx
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // The SysEx input, that we forward to MT32 synth
-OSStatus		mt32emu_osx_au::HandleSysEx(		const UInt8 *	inData,	UInt32			inLength )
+OSStatus mt32emu_osx_au::HandleSysEx(const UInt8 *inData, 
+									 UInt32 inLength)
 { 
 	pthread_mutex_lock(&mAUMutex);
 #ifdef DEBUG_PRINT

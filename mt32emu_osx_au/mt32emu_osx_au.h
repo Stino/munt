@@ -8,18 +8,25 @@
  *
  */
 
+// activate here that AU with MT32 is remapped at startup to General MIDI
+// #define USE_MT32_AS_GMIDI 1
+
+// activate here higher debug output
+// #define DEBUG_PRINT 1 
+
 #include "mt32emu.h"
 #include "Structures.h"
 
 #include "mt32emu_osx_auVersion.h"
 #include "AUInstrumentBase.h"
 
+#ifdef USE_MT32_AS_GMIDI
+#include <AudioToolbox/AudioToolbox.h>
+#endif
+
 //this value scales the volume output 
 //use a small value here, if not it is much too loud
 #define OUTSCALE 0.0001f;
-
-// #define DEBUG_PRINT 1 
-
 
 static void vdebug(void *userData, const char *fmt, va_list list) {
 	char message[1024];
@@ -116,6 +123,8 @@ private:
 	inline ComponentResult		Render6Chan(UInt32							frameOffset,
 									        UInt32							inNumberFrames,
 											AudioBufferList&				outOutputData);
+	
+	void LoadSysExFromMIDIFile(const char *filename);
 	
 	AudioTimeStamp lastTimeStamp;
 	pthread_mutex_t mAUMutex;
