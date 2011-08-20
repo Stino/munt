@@ -90,7 +90,7 @@ mMidiQueue(kEventQueueSize)
 	LoadSysExFromMIDIFile("MTGM.MID"); //Standart GMIDI remapping
 	LoadSysExFromMIDIFile("MTR-STND.MID"); //Standart Drum Set
 	//LoadSysExFromMIDIFile("MTR-ORCH.MID"); //Alternative Drum Set
-	LoadSysExFromMIDIFile("CMR-SFX.MID"); //Sound Effects
+	//LoadSysExFromMIDIFile("CMR-SFX.MID"); //Sound Effects instead of drum Set
 }
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -271,6 +271,8 @@ ComponentResult	mt32emu_osx_au::Render(AudioUnitRenderActionFlags &	ioActionFlag
 	UInt32 fromFrame = 0;
 	UInt32 diff = 0;
 	AudioBufferList& outOutputData = GetOutput(0)->GetBufferList();	
+	AudioStreamBasicDescription outStreamFormat = GetOutput(0)->GetStreamFormat();
+		
 #ifdef DEBUG_PRINT	
 	printf("MT32: Render start\n");
 #endif	
@@ -301,7 +303,7 @@ ComponentResult	mt32emu_osx_au::Render(AudioUnitRenderActionFlags &	ioActionFlag
 			//render all played midi notes till frame before actual frame
 			diff = event->inStartFrame - fromFrame;
 			pthread_mutex_lock(&mAUMutex);
-			err = RenderAllChan(fromFrame,diff,outOutputData);
+			err = RenderAllChan(fromFrame,diff,outOutputData,outStreamFormat);
 			pthread_mutex_unlock(&mAUMutex);
 #ifdef DEBUG_PRINT				
 			printf("MT32: render %ld Frames from: %ld \n",(long int)diff,(long int)fromFrame);
@@ -323,11 +325,12 @@ ComponentResult	mt32emu_osx_au::Render(AudioUnitRenderActionFlags &	ioActionFlag
 	// render rest
 	diff = inNumberFrames - fromFrame;
 	pthread_mutex_lock(&mAUMutex);
-	err = RenderAllChan(fromFrame,diff,outOutputData);
+	err = RenderAllChan(fromFrame,diff,outOutputData,outStreamFormat);
 	pthread_mutex_unlock(&mAUMutex);
 #ifdef DEBUG_PRINT	
 	printf("MT32: render rest %ld Frames from: %ld \n",(long int)diff,(long int)fromFrame);
 #endif	
+	      
 	return err;
 }
 
@@ -337,7 +340,8 @@ ComponentResult	mt32emu_osx_au::Render(AudioUnitRenderActionFlags &	ioActionFlag
 // The Sound output, that is created by MT32 synth
 inline ComponentResult	mt32emu_osx_au::RenderAllChan(UInt32 frameOffset,
 													  UInt32 inNumberFrames,
-													  AudioBufferList& outOutputData)
+													  AudioBufferList& outOutputData,
+													  AudioStreamBasicDescription& outStreamFormat)
 {	
 	ComponentResult err = noErr;
 	
@@ -351,11 +355,11 @@ inline ComponentResult	mt32emu_osx_au::RenderAllChan(UInt32 frameOffset,
 		case 1:		
 		case 2:			
 			// mono and stereo are handled by 2 channel render of MUNT
-			err = Render2Chan(frameOffset,inNumberFrames, outOutputData);
+			err = Render2Chan(frameOffset,inNumberFrames, outOutputData,outStreamFormat);
 			break;			
 		case 6:			
 			// 6 channel render of MUNT
-			err = Render6Chan(frameOffset,inNumberFrames, outOutputData);
+			err = Render6Chan(frameOffset,inNumberFrames, outOutputData,outStreamFormat);
 			break;			
 		default:
 			return kAudioDeviceUnsupportedFormatError;
@@ -369,15 +373,20 @@ inline ComponentResult	mt32emu_osx_au::RenderAllChan(UInt32 frameOffset,
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 inline ComponentResult mt32emu_osx_au::Render2Chan(UInt32 frameOffset,
 												   UInt32 inNumberFrames,
-												   AudioBufferList&	outOutputData)
+												   AudioBufferList&	outOutputData,
+												   AudioStreamBasicDescription& outStreamFormat)
 {
+	ComponentResult err = noErr;
 	UInt32 len;
 	float *l1, *r1 = 0;
 	float scaleVol = Globals()->GetParameter(kGlobalVolumeParam) * OUTSCALE;
+	Float64 factor = mt32samplerate / outStreamFormat.mSampleRate;
+	UInt32 mt32NumberFrames =  factor * inNumberFrames;
+	UInt32 pos = 0;
+
 	// buffer for 2 channel variant
-	Bit16s *tempbuff = new Bit16s[inNumberFrames << 1]; // "<< 1" is like "* 2" just faster
-	Bit16s *t = tempbuff;
-	
+	Bit16s *tempbuff = new Bit16s[mt32NumberFrames << 1]; // "<< 1" is like "* 2" just faster
+
 	// init pointers for moving in array
 	l1 = (float*)outOutputData.mBuffers[0].mData;
 	l1 += frameOffset;
@@ -385,27 +394,26 @@ inline ComponentResult mt32emu_osx_au::Render2Chan(UInt32 frameOffset,
 	if (outOutputData.mNumberBuffers == 2) r1 += frameOffset;
 	
 	// call 2 channel render of MUNT (know it is intenal an 6 channel render)	
-	_synth->render((Bit16s *)tempbuff, inNumberFrames);
+	_synth->render((Bit16s *)tempbuff, mt32NumberFrames);
 	
-	// convert outbuffer of MUNT to outpuffer of AU
-	len = inNumberFrames;
-	while(len>0)
+	// convert outbuffer of MUNT to outpuffer of AU with an very basic change of sample rate (sure there are better ways)
+	len = 0;
+	while(len<inNumberFrames)
 	{
-		len--;
-		*l1 = (*t) * scaleVol;
+		pos = (UInt32)(factor * len)<<1;
+		*l1 = tempbuff[pos] * scaleVol;
 		l1++;
-		t++;
 		if (outOutputData.mNumberBuffers == 2)
 		{
-			*r1 = (*t) * scaleVol;
+			*r1 = tempbuff[pos+1] * scaleVol;
 			r1++;
 		}
-		t++;
-	}		
+		len++;
+	}
 	
 	// free buffer
 	delete tempbuff;
-	return noErr;
+	return err;
 }
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -413,25 +421,23 @@ inline ComponentResult mt32emu_osx_au::Render2Chan(UInt32 frameOffset,
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 inline ComponentResult	mt32emu_osx_au::Render6Chan(UInt32 frameOffset,
 													UInt32 inNumberFrames,
-													AudioBufferList& outOutputData)
+													AudioBufferList& outOutputData,
+													AudioStreamBasicDescription& outStreamFormat)
 {	
 	UInt32 len;
 	float *l1, *r1, *l2, *r2, *l3, *r3 = 0;
 	float scaleVol = Globals()->GetParameter(kGlobalVolumeParam) * OUTSCALE;
+	Float64 factor = mt32samplerate / outStreamFormat.mSampleRate;
+	UInt32 mt32NumberFrames =  factor * inNumberFrames;
+	UInt32 pos = 0;
 	
 	// buffers for 6 channel variant
-	Bit16s *tempLeft1 = new Bit16s[inNumberFrames];
-	Bit16s *tl1 = tempLeft1;
-	Bit16s *tempRight1 = new Bit16s[inNumberFrames];
-	Bit16s *tr1 = tempRight1;
-	Bit16s *tempLeft2 = new Bit16s[inNumberFrames];
-	Bit16s *tl2 = tempLeft2;
-	Bit16s *tempRight2 = new Bit16s[inNumberFrames];
-	Bit16s *tr2 = tempRight2;
-	Bit16s *tempLeft3 = new Bit16s[inNumberFrames];
-	Bit16s *tl3 = tempLeft3;
-	Bit16s *tempRight3 = new Bit16s[inNumberFrames];
-	Bit16s *tr3 = tempRight3;
+	Bit16s *tempLeft1 = new Bit16s[mt32NumberFrames];
+	Bit16s *tempRight1 = new Bit16s[mt32NumberFrames];
+	Bit16s *tempLeft2 = new Bit16s[mt32NumberFrames];
+	Bit16s *tempRight2 = new Bit16s[mt32NumberFrames];
+	Bit16s *tempLeft3 = new Bit16s[mt32NumberFrames];
+	Bit16s *tempRight3 = new Bit16s[mt32NumberFrames];
 
 	// init pointers for moving in array
 	l1 = (float*)outOutputData.mBuffers[0].mData;
@@ -448,31 +454,27 @@ inline ComponentResult	mt32emu_osx_au::Render6Chan(UInt32 frameOffset,
 	r3 += frameOffset;
 	
 	// call 6 channel render of MUNT
-	_synth->renderStreams((Bit16s *)tempLeft1, (Bit16s *)tempRight1, (Bit16s *)tempLeft2, (Bit16s *)tempRight2,(Bit16s *)tempLeft3, (Bit16s *)tempRight3, inNumberFrames);
+	_synth->renderStreams((Bit16s *)tempLeft1, (Bit16s *)tempRight1, (Bit16s *)tempLeft2, (Bit16s *)tempRight2,(Bit16s *)tempLeft3, (Bit16s *)tempRight3, mt32NumberFrames);
 	
 	// convert outbuffer of MUNT to outpuffer of AU// convert outbuffer of MUNT to outpuffer of AU
-	len = inNumberFrames;
-	while(len>0)
+	len = 0;
+	while(len<inNumberFrames)
 	{
-		len--;
-		*l1 = (*tl1) * scaleVol;
-		*r1 = (*tr1) * scaleVol;
-		*l2 = (*tl2) * scaleVol;
-		*r2 = (*tr2) * scaleVol;
-		*l3 = (*tl3) * scaleVol;
-		*r3 = (*tr3) * scaleVol;
+		pos = factor * len;
+		*l1 = tempLeft1[pos]  * scaleVol;
+		*r1 = tempRight1[pos] * scaleVol;
+		*l2 = tempLeft2[pos]  * scaleVol;
+		*r2 = tempRight2[pos] * scaleVol;
+		*l3 = tempLeft3[pos]  * scaleVol;
+		*r3 = tempRight3[pos] * scaleVol;
 		l1++;
 		r1++;
 		l2++;
 		r2++;
 		l3++;
 		r3++;
-		tl1++;
-		tr1++;
-		tl2++;
-		tr2++;
-		tl3++;
-		tr3++;
+		
+		len++;
 	}
 	
 	// free buffers

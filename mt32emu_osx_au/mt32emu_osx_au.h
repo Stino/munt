@@ -114,15 +114,18 @@ private:
 
 	inline ComponentResult	RenderAllChan(  UInt32							frameOffset,
 											UInt32							inNumberFrames,
-											AudioBufferList&				outOutputData);
+											AudioBufferList&				outOutputData,
+											AudioStreamBasicDescription& outStreamFormat);
 	
 	inline ComponentResult		Render2Chan(UInt32							frameOffset,
 									        UInt32							inNumberFrames,
-											AudioBufferList&				outOutputData);
+											AudioBufferList&				outOutputData,
+											AudioStreamBasicDescription& outStreamFormat);
 	
 	inline ComponentResult		Render6Chan(UInt32							frameOffset,
 									        UInt32							inNumberFrames,
-											AudioBufferList&				outOutputData);
+											AudioBufferList&				outOutputData,
+											AudioStreamBasicDescription& outStreamFormat);
 	
 	void LoadSysExFromMIDIFile(const char *filename);
 	
