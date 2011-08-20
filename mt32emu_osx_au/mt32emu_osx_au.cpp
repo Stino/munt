@@ -401,6 +401,10 @@ inline ComponentResult mt32emu_osx_au::Render2Chan(UInt32 frameOffset,
 	while(len<inNumberFrames)
 	{
 		pos = (UInt32)(factor * len)<<1;
+		if (pos >= (mt32NumberFrames<<1))
+		{
+			pos = (mt32NumberFrames - 1)<<1;
+		}
 		*l1 = tempbuff[pos] * scaleVol;
 		l1++;
 		if (outOutputData.mNumberBuffers == 2)
@@ -461,6 +465,10 @@ inline ComponentResult	mt32emu_osx_au::Render6Chan(UInt32 frameOffset,
 	while(len<inNumberFrames)
 	{
 		pos = factor * len;
+		if (pos >= (mt32NumberFrames))
+		{
+			pos = (mt32NumberFrames - 1);
+		}
 		*l1 = tempLeft1[pos]  * scaleVol;
 		*r1 = tempRight1[pos] * scaleVol;
 		*l2 = tempLeft2[pos]  * scaleVol;
@@ -555,7 +563,7 @@ OSStatus 	mt32emu_osx_au::HandleMidiEvent(UInt8 status,
 OSStatus mt32emu_osx_au::HandleSysEx(const UInt8 *inData, 
 									 UInt32 inLength)
 { 
-	pthread_mutex_lock(&mAUMutex);
+	pthread_mutex_lock(&mAUMutex);	
 #ifdef DEBUG_PRINT
 	printf("MT32: SysEx-Data: ");
 	for (unsigned long i = 0;i<inLength;i++) printf("%2.2X ",inData[i]);
